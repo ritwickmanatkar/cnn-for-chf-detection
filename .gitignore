@@ -5,6 +5,10 @@
 /gradcam_poc/ptbdb_abnormal.csv
 /gradcam_poc/ptbdb_normal.csv
 
-# Checkpoints
+# Checkpoints and Caches
 .idea
 .DS_Store
+__pycache__
+
+# Virtual Environment
+/venv/
