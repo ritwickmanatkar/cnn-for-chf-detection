@@ -1,3 +1,5 @@
+import os
+
 import pandas as pd
 import numpy as np
 
@@ -24,6 +26,7 @@ from sklearn.metrics import f1_score, accuracy_score
 
 from constants import (
     FIVE_MIN_TIME_SLICES_FOLDER,
+    COMBINED_DATA_FOLDER,
     N_CLASSES,
     TIME_SERIES_LENGTH,
     MODEL_FOLDER,
@@ -50,20 +53,32 @@ def prepare_data():
         "16795", "17453", "19093", "19830", "chf02", "chf06", "chf08", "chf11"
     ]
 
-    temp = []
-    for file in tqdm(train_file_names):
-        temp.append(pd.read_csv(FIVE_MIN_TIME_SLICES_FOLDER + f"{file}.csv").iloc[:, 1:])
-    train = pd.concat(temp, ignore_index=True)
+    if not os.path.exists(COMBINED_DATA_FOLDER + f"train.csv"):
+        temp = []
+        for file in tqdm(train_file_names):
+            temp.append(pd.read_csv(FIVE_MIN_TIME_SLICES_FOLDER + f"{file}.csv").iloc[:, 1:])
+        train = pd.concat(temp, ignore_index=True)
+        train.to_csv(COMBINED_DATA_FOLDER + f"train.csv")
+    else:
+        train = pd.read_csv(COMBINED_DATA_FOLDER + f"train.csv").iloc[:, 1:]
 
-    temp = []
-    for file in tqdm(validation_file_names):
-        temp.append(pd.read_csv(FIVE_MIN_TIME_SLICES_FOLDER + f"{file}.csv").iloc[:, 1:])
-    validation = pd.concat(temp, ignore_index=True)
+    if not os.path.exists(COMBINED_DATA_FOLDER + f"validation.csv"):
+        temp = []
+        for file in tqdm(validation_file_names):
+            temp.append(pd.read_csv(FIVE_MIN_TIME_SLICES_FOLDER + f"{file}.csv").iloc[:, 1:])
+        validation = pd.concat(temp, ignore_index=True)
+        validation.to_csv(COMBINED_DATA_FOLDER + f"validation.csv")
+    else:
+        validation = pd.read_csv(COMBINED_DATA_FOLDER + f"validation.csv").iloc[:, 1:]
 
-    temp = []
-    for file in tqdm(test_file_names):
-        temp.append(pd.read_csv(FIVE_MIN_TIME_SLICES_FOLDER + f"{file}.csv").iloc[:, 1:])
-    test = pd.concat(temp, ignore_index=True)
+    if not os.path.exists(COMBINED_DATA_FOLDER + f"test.csv"):
+        temp = []
+        for file in tqdm(test_file_names):
+            temp.append(pd.read_csv(FIVE_MIN_TIME_SLICES_FOLDER + f"{file}.csv").iloc[:, 1:])
+        test = pd.concat(temp, ignore_index=True)
+        test.to_csv(COMBINED_DATA_FOLDER + f"test.csv")
+    else:
+        test = pd.read_csv(COMBINED_DATA_FOLDER + f"test.csv").iloc[:, 1:]
 
     return train, validation, test
 

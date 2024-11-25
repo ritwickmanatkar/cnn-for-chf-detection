@@ -13,11 +13,12 @@ DATA_FOLDER = BASE_PATH + "data/"
 BIDMC_FOLDER_NAME = DATA_FOLDER + "bidmc-congestive-heart-failure-database-1.0.0/"
 MITBIH_FOLDER_NAME = DATA_FOLDER + "mit-bih-normal-sinus-rhythm-database-1.0.0/"
 
-# Processed Data Folder
+# Processed Data Base Folder
 PROCESSED_DATA_FOLDER = DATA_FOLDER + "processed_data/"
 
-# 5 Min Time Slices folder
+# Processed Data folders
 FIVE_MIN_TIME_SLICES_FOLDER = PROCESSED_DATA_FOLDER + "5min_sections/"
+COMBINED_DATA_FOLDER = PROCESSED_DATA_FOLDER + "combined_data/"
 
 # DATA PARAMETERS
 MITBIH_SAMPLING_FREQUENCY = 128
