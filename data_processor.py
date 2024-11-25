@@ -12,10 +12,16 @@ from wfdb import processing
 from tqdm import tqdm
 
 
-from constants import BIDMC_FOLDER_NAME, MITBIH_FOLDER_NAME, FIVE_MIN_TIME_SLICES_FOLDER
+from constants import (
+    BIDMC_FOLDER_NAME,
+    MITBIH_FOLDER_NAME,
+    FIVE_MIN_TIME_SLICES_FOLDER,
+    MITBIH_SAMPLING_FREQUENCY,
+    TIME_SERIES_LENGTH
+)
 
 
-MITBIH_SAMPLING_FREQUENCY = 128
+
 
 
 def build_file_sets():
@@ -138,7 +144,7 @@ if __name__ == '__main__':
         file_name = bidmc_files.iloc[i, 0]
         processed_bidmc_data[file_name] = process_bidmc_dat_file(
             dat_file=BIDMC_FOLDER_NAME + file_name,
-            ts_length=300
+            ts_length=TIME_SERIES_LENGTH
         )
 
     print("Saving BIDMC Files...")
@@ -152,7 +158,7 @@ if __name__ == '__main__':
         file_name = mitbih_files.iloc[i, 0]
         processed_mitbih_data[file_name] = process_mitbih_dat_file(
             dat_file=MITBIH_FOLDER_NAME + str(file_name),
-            ts_length=300
+            ts_length=TIME_SERIES_LENGTH
         )
 
     print("Saving MITBIH Files...")
