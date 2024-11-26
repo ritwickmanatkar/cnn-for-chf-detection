@@ -10,18 +10,18 @@ import pandas as pd
 import wfdb
 from wfdb import processing
 from tqdm import tqdm
+from sklearn.preprocessing import MinMaxScaler
+from scipy.signal import find_peaks
 
 
 from constants import (
     BIDMC_FOLDER_NAME,
     MITBIH_FOLDER_NAME,
-    FIVE_MIN_TIME_SLICES_FOLDER,
+    EXTRACTED_HEARTBEATS_FOLDER,
     MITBIH_SAMPLING_FREQUENCY,
-    TIME_SERIES_LENGTH
+    TIME_SERIES_LENGTH,
+    BEATS_SELECTION_DURATION_IN_SECS
 )
-
-
-
 
 
 def build_file_sets():
@@ -43,11 +43,14 @@ def process_bidmc_dat_file(dat_file: str, ts_length: int):
 
     NOTE: The param 'dat_file' should not contain the file extension as we use this structure
     to extract the annotation file.
+
+    Heartbeat Extraction using R-Peak identification method is from this paper:
+    https://arxiv.org/pdf/1805.00794
     """
     record = wfdb.rdrecord(dat_file)
     ann = wfdb.rdann(dat_file, 'ecg')
 
-    # Downsampling to 128 Hz
+    # Step 1: Downsampling to 128 Hz
     record.p_signal, ann = processing.resample_multichan(
         xs=record.p_signal,
         ann=ann,
@@ -55,42 +58,70 @@ def process_bidmc_dat_file(dat_file: str, ts_length: int):
         fs_target=MITBIH_SAMPLING_FREQUENCY
     )
 
-    # Extracting the Time Series ECG data
-    data = np.array(record.p_signal)
+    # Step 2: Extracting the Time Series ECG1 data
+    data = np.round(np.array(record.p_signal), 3)
     if data.ndim > 1:
         try:
             selected_idx = record.sig_name.index('ECG1')
         except ValueError as err:
             print("ECG1 signal not found", err)
             selected_idx = 0
-
     data = data[:, selected_idx]
 
+    # TODO: I dont think this is useful but keeping it for now.
     if len(data) < ts_length:
         raise ValueError(
             f"'ts_length'= {ts_length} is longer than the length of the data ({len(data)})")
 
-    # Extracting the Annotations for the data.
+    # Step 3: Preparing the Annotations for the data selection.
     labels = np.zeros_like(data)
     labels[ann.sample] = 1
 
-    # Utils for iteration
-    slices = []
+    # Step 4: Process the R-peaks of the ECG data
+    selected_parts = []
 
-    for idx in tqdm(range(ts_length, len(data), ts_length)):
-        current_slice_of_data = data[idx - ts_length: idx]
-        current_label = 1 if np.any(labels[idx - ts_length: idx]) else 0
+    # Step 4.1: Split the file into 10 sec windows
+    window_size = MITBIH_SAMPLING_FREQUENCY * BEATS_SELECTION_DURATION_IN_SECS
+    for window_start in tqdm(range(0, len(data), window_size)):
+        data_window = data[window_start: window_start + window_size]
+        label_window = labels[window_start: window_start + window_size]
 
-        slices.append(list(current_slice_of_data) + [current_label])
+        # Step 4.2: MinMax Scale the data window
+        transformed_data_window = MinMaxScaler().fit_transform(data_window.reshape(-1, 1)).flatten()
 
-    # Generated the last slice which was potentially cut off.
-    if len(data) % ts_length != 0:
-        current_slice_of_data = data[len(data) - ts_length:]
-        current_label = 1 if np.any(labels[len(data) - ts_length:]) else 0
+        # Step 4.3: Find the set of valid R-peaks from the window.
+        r_peak_candidates, _ = find_peaks(x=transformed_data_window, height=0.9, distance=30)
 
-        slices.append(list(current_slice_of_data) + [current_label])
+        if len(r_peak_candidates) < 2:
+            continue
 
-    df = pd.DataFrame(slices, columns=list(range(ts_length)) + ['label'])
+        # Step 4.4: Calculate R-R intervals and median heartbeat period T
+        T = np.median(np.subtract(r_peak_candidates[1:], r_peak_candidates[:-1]))
+
+        # Step 4.5: Calculate the extraction length for this window.
+        extraction_length = min(int(1.2 * T), ts_length)
+
+        for r_peak in r_peak_candidates:
+            if r_peak + extraction_length < window_size:
+                selected_parts.append(
+                    # ECG Signal of set length
+                    list(
+                        np.pad(
+                            transformed_data_window[r_peak: r_peak + extraction_length],
+                            (0, ts_length - extraction_length),
+                            mode='constant'
+                        )[:ts_length]
+                    ) + [
+                        # Label for the extracted beat
+                        1 if np.any(label_window[r_peak: r_peak + extraction_length]) else 0
+                    ] + [
+                        # Annotations for the extracted beat.
+                        np.where(label_window[r_peak: r_peak + extraction_length] > 0)[0]
+                    ]
+                )
+
+    print(f"{len(selected_parts)} heartbeats extracted")
+    df = pd.DataFrame(selected_parts, columns=list(range(ts_length)) + ['label', 'annotations'])
 
     return df
 
@@ -118,19 +149,45 @@ def process_mitbih_dat_file(dat_file: str, ts_length: int):
         raise ValueError(
             f"'ts_length'= {ts_length} is longer than the length of the data ({len(data)})")
 
-    # Utils for iteration
-    slices = []
+    # Step 4: Process the R-peaks of the ECG data
+    selected_parts = []
 
-    for idx in tqdm(range(ts_length, len(data), ts_length)):
-        current_slice_of_data = data[idx - ts_length: idx]
-        slices.append(list(current_slice_of_data) + [0])
+    # Step 4.1: Split the file into 10 sec windows
+    window_size = MITBIH_SAMPLING_FREQUENCY * BEATS_SELECTION_DURATION_IN_SECS
+    for window_start in tqdm(range(0, len(data), window_size)):
+        data_window = data[window_start: window_start + window_size]
 
-    # Generated the last slice which was potentially cut off.
-    if len(data) % ts_length != 0:
-        current_slice_of_data = data[len(data) - ts_length:]
-        slices.append(list(current_slice_of_data) + [0])
+        # Step 4.2: MinMax Scale the data window
+        transformed_data_window = MinMaxScaler().fit_transform(data_window.reshape(-1, 1)).flatten()
 
-    df = pd.DataFrame(slices, columns=list(range(ts_length)) + ['label'])
+        # Step 4.3: Find the set of valid R-peaks from the window.
+        r_peak_candidates, _ = find_peaks(x=transformed_data_window, height=0.9, distance=30)
+
+        if len(r_peak_candidates) < 2:
+            continue
+
+        # Step 4.4: Calculate R-R intervals and median heartbeat period T
+        T = np.median(np.subtract(r_peak_candidates[1:], r_peak_candidates[:-1]))
+
+        # Step 4.5: Calculate the extraction length for this window.
+        extraction_length = min(int(1.2 * T), ts_length)
+
+        for r_peak in r_peak_candidates:
+            if r_peak + extraction_length < window_size:
+                selected_parts.append(
+                    # ECG Signal of set length
+                    list(
+                        np.pad(
+                            transformed_data_window[r_peak: r_peak + extraction_length],
+                            (0, ts_length - extraction_length),
+                            mode='constant'
+                        )[:ts_length]
+                    ) + [0] + [[]]
+                )
+
+    print(f"{len(selected_parts)} heartbeats extracted")
+    df = pd.DataFrame(selected_parts, columns=list(range(ts_length)) + ['label', 'annotations'])
+
     return df
 
 
@@ -140,27 +197,33 @@ if __name__ == '__main__':
     # ------------- BIDMC Files -------------
     print("Processing BIDMC CHF Files...")
     processed_bidmc_data = {}
-    for i in tqdm(range(len(bidmc_files))):
+    cnt = 1
+    for i in range(len(bidmc_files)):
+        print(f"File #{cnt}")
         file_name = bidmc_files.iloc[i, 0]
         processed_bidmc_data[file_name] = process_bidmc_dat_file(
             dat_file=BIDMC_FOLDER_NAME + file_name,
             ts_length=TIME_SERIES_LENGTH
         )
+        cnt+=1
 
     print("Saving BIDMC Files...")
     for file, df in tqdm(processed_bidmc_data.items()):
-        df.to_csv(FIVE_MIN_TIME_SLICES_FOLDER + f"{file}.csv")
+        df.to_csv(EXTRACTED_HEARTBEATS_FOLDER + f"{file}.csv")
 
     # ------------- MITBIH Files -------------
     print("Processing MITBIH Normal/Sinus Rhythm Files...")
     processed_mitbih_data = {}
-    for i in tqdm(range(len(mitbih_files))):
+    cnt = 1
+    for i in range(len(mitbih_files)):
+        print(f"File #{cnt}")
         file_name = mitbih_files.iloc[i, 0]
         processed_mitbih_data[file_name] = process_mitbih_dat_file(
             dat_file=MITBIH_FOLDER_NAME + str(file_name),
             ts_length=TIME_SERIES_LENGTH
         )
+        cnt+=1
 
     print("Saving MITBIH Files...")
     for file, df in tqdm(processed_mitbih_data.items()):
-        df.to_csv(FIVE_MIN_TIME_SLICES_FOLDER + f"{file}.csv")
+        df.to_csv(EXTRACTED_HEARTBEATS_FOLDER + f"{file}.csv")

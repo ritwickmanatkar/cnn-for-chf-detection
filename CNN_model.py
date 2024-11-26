@@ -84,7 +84,7 @@ def prepare_data():
 
 
 def separate_features_and_labels(df):
-    return df.iloc[:, :-1].values, df.iloc[:, -1].values
+    return df.iloc[:, :-2].values, df.iloc[:, -2].values, df.iloc[:, -1].values
 
 
 def get_model():
@@ -174,8 +174,8 @@ if __name__ == '__main__':
 
     train, validation, test = prepare_data()
 
-    X_train, y_train = separate_features_and_labels(train)
-    X_validation, y_validation = separate_features_and_labels(validation)
-    X_test, y_test = separate_features_and_labels(test)
+    X_train, y_train, ann_train = separate_features_and_labels(train)
+    X_validation, y_validation, ann_validation = separate_features_and_labels(validation)
+    X_test, y_test, ann_test = separate_features_and_labels(test)
 
     model = train_model(X_train, y_train, X_validation, y_validation)
