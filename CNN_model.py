@@ -5,32 +5,29 @@ import numpy as np
 
 from tqdm import tqdm
 import tensorflow as tf
-from keras import optimizers, losses, activations, models
+from tensorflow.keras.models import Model
+from tensorflow.keras.layers import (
+    Input,
+    Conv1D,
+    BatchNormalization,
+    ReLU,
+    Flatten,
+    Dense
+)
+from keras import optimizers
 from keras.callbacks import (
     ModelCheckpoint,
     EarlyStopping,
     LearningRateScheduler,
     ReduceLROnPlateau
 )
-from keras.layers import (
-    Dense,
-    Input,
-    Dropout,
-    Convolution1D,
-    MaxPool1D,
-    GlobalMaxPool1D,
-    GlobalAveragePooling1D,
-    concatenate
-)
-from sklearn.metrics import f1_score, accuracy_score
+from sklearn.metrics import f1_score, accuracy_score, confusion_matrix, ConfusionMatrixDisplay
+import matplotlib.pyplot as plt
 
 from constants import (
-    FIVE_MIN_TIME_SLICES_FOLDER,
-    COMBINED_DATA_FOLDER,
-    N_CLASSES,
-    TIME_SERIES_LENGTH,
     MODEL_FOLDER,
-    N_EPOCHS
+    N_EPOCHS,
+    BATCH_SIZE
 )
 
 
@@ -40,7 +37,14 @@ def reset_tf_session():
     tf.compat.v1.reset_default_graph()
 
 
-def prepare_data():
+def prepare_data(data_folder: str, save_to_folder: str):
+    """ Splits data into train, validation and test. This is based on the research paper. (Fig. 2)
+
+    :param data_folder: Data Read Folder
+    :param save_to_folder: Data Save Folder
+
+    :return: train, validation, and test dataframes
+    """
     # Extracted from the Research Paper
     train_file_names = [
         "16273", "16483", "16539", "16773", "16786", "18177", "18184", "19090", "19140",
@@ -53,103 +57,119 @@ def prepare_data():
         "16795", "17453", "19093", "19830", "chf02", "chf06", "chf08", "chf11"
     ]
 
-    if not os.path.exists(COMBINED_DATA_FOLDER + f"train.csv"):
+    if not os.path.exists(save_to_folder + f"train.csv"):
         temp = []
         for file in tqdm(train_file_names):
-            temp.append(pd.read_csv(FIVE_MIN_TIME_SLICES_FOLDER + f"{file}.csv").iloc[:, 1:])
+            temp.append(pd.read_csv(data_folder + f"{file}.csv").iloc[:, 1:])
         train = pd.concat(temp, ignore_index=True)
-        train.to_csv(COMBINED_DATA_FOLDER + f"train.csv")
+        train.to_csv(save_to_folder + f"train.csv")
     else:
-        train = pd.read_csv(COMBINED_DATA_FOLDER + f"train.csv").iloc[:, 1:]
+        train = pd.read_csv(save_to_folder + f"train.csv").iloc[:, 1:]
 
-    if not os.path.exists(COMBINED_DATA_FOLDER + f"validation.csv"):
+    if not os.path.exists(save_to_folder + f"validation.csv"):
         temp = []
         for file in tqdm(validation_file_names):
-            temp.append(pd.read_csv(FIVE_MIN_TIME_SLICES_FOLDER + f"{file}.csv").iloc[:, 1:])
+            temp.append(pd.read_csv(data_folder + f"{file}.csv").iloc[:, 1:])
         validation = pd.concat(temp, ignore_index=True)
-        validation.to_csv(COMBINED_DATA_FOLDER + f"validation.csv")
+        validation.to_csv(save_to_folder + f"validation.csv")
     else:
-        validation = pd.read_csv(COMBINED_DATA_FOLDER + f"validation.csv").iloc[:, 1:]
+        validation = pd.read_csv(save_to_folder + f"validation.csv").iloc[:, 1:]
 
-    if not os.path.exists(COMBINED_DATA_FOLDER + f"test.csv"):
+    if not os.path.exists(save_to_folder + f"test.csv"):
         temp = []
         for file in tqdm(test_file_names):
-            temp.append(pd.read_csv(FIVE_MIN_TIME_SLICES_FOLDER + f"{file}.csv").iloc[:, 1:])
+            temp.append(pd.read_csv(data_folder + f"{file}.csv").iloc[:, 1:])
         test = pd.concat(temp, ignore_index=True)
-        test.to_csv(COMBINED_DATA_FOLDER + f"test.csv")
+        test.to_csv(save_to_folder + f"test.csv")
     else:
-        test = pd.read_csv(COMBINED_DATA_FOLDER + f"test.csv").iloc[:, 1:]
+        test = pd.read_csv(save_to_folder + f"test.csv").iloc[:, 1:]
 
     return train, validation, test
 
 
 def separate_features_and_labels(df):
-    return df.iloc[:, :-2].values, df.iloc[:, -2].values, df.iloc[:, -1].values
+    """ Separates given df into features and labels
+
+    :param df: Dataframe
+
+    :return: features and labels numpy arrays
+    """
+    return df.iloc[:, :-1].values, df.iloc[:, -1].values
 
 
-def get_model():
-    nclass = N_CLASSES
-    inp = Input(shape=(TIME_SERIES_LENGTH, 1))
+def get_model(n_classes, n_features):
+    """ This model is defined on the basis of the research paper.(Section 2.5)
+    https://sci-hub.usualwant.com/10.1016/j.bspc.2019.101597
 
-    # Block 1
-    img_1 = Convolution1D(16, kernel_size=5, activation=activations.relu, padding="valid")(inp)
-    img_1 = Convolution1D(16, kernel_size=5, activation=activations.relu, padding="valid")(img_1)
-    img_1 = MaxPool1D(pool_size=2)(img_1)
-    img_1 = Dropout(rate=0.1)(img_1)
+    :param n_classes: no of classes we are working with
+    :param n_features: no of samples that are used for training.
 
-    # Block 2
-    img_1 = Convolution1D(32, kernel_size=3, activation=activations.relu, padding="valid")(img_1)
-    img_1 = Convolution1D(32, kernel_size=3, activation=activations.relu, padding="valid")(img_1)
-    img_1 = MaxPool1D(pool_size=2)(img_1)
-    img_1 = Dropout(rate=0.1)(img_1)
+    :return: Model
+    """
+    inp = Input(shape=(n_features, 1))
 
-    # Block 3
-    img_1 = Convolution1D(32, kernel_size=3, activation=activations.relu, padding="valid")(img_1)
-    img_1 = Convolution1D(32, kernel_size=3, activation=activations.relu, padding="valid")(img_1)
-    img_1 = MaxPool1D(pool_size=2)(img_1)
-    img_1 = Dropout(rate=0.1)(img_1)
+    x = Conv1D(filters=20, kernel_size=10, strides=1, padding="valid", name="Conv_Block1")(inp)
+    x = BatchNormalization(name="BatchNorm_Block1")(x)
+    x = ReLU(name="ReLU_Block1")(x)
 
-    # Block 4
-    img_1 = Convolution1D(256, kernel_size=3, activation=activations.relu, padding="valid")(img_1)
-    img_1 = Convolution1D(256, kernel_size=3, activation=activations.relu, padding="valid")(img_1)
-    img_1 = GlobalMaxPool1D()(img_1)
-    img_1 = Dropout(rate=0.2)(img_1)
+    x = Conv1D(filters=20, kernel_size=15, strides=1, padding="valid", name="Conv_Block2")(x)
+    x = BatchNormalization(name="BatchNorm_Block2")(x)
+    x = ReLU(name="ReLU_Block2")(x)
 
-    # Dense Block 1
-    dense_1 = Dense(64, activation=activations.relu, name="dense_1")(img_1)
-    dense_1 = Dense(64, activation=activations.relu, name="dense_2")(dense_1)
-    dense_1 = Dense(nclass, activation=activations.softmax, name="dense_3_mitbih")(dense_1)
+    x = Conv1D(filters=20, kernel_size=20, strides=1, padding="valid", name="Conv_Block3")(x)
+    x = BatchNormalization(name="BatchNorm_Block3")(x)
+    x = ReLU(name="ReLU_Block3")(x)
 
-    model = models.Model(inputs=inp, outputs=dense_1)
-    opt = optimizers.Adam(0.001)
+    x = Flatten(name="Flatten")(x)
 
-    model.compile(optimizer=opt, loss=losses.sparse_categorical_crossentropy, metrics=['acc'])
-    print(model.summary())
+    x = Dense(30, activation="relu", name="MLP_Hidden_Layer")(x)
+    x = Dense(n_classes, activation="softmax", name="Output_Layer")(
+        x)
+
+    model = Model(inputs=inp, outputs=x, name="ECG_Classifier")
+
+    optimizer = optimizers.Adam(learning_rate=0.001, beta_1=0.9, beta_2=0.999, epsilon=1e-8)
+
+    # Compile the model
+    model.compile(optimizer=optimizer, loss="sparse_categorical_crossentropy", metrics=["accuracy"])
+
+    # Summary
+    model.summary()
 
     return model
 
 
-def train_model(X, y, X_validation, y_validation):
-    model = get_model()
+def train_model(X, y, X_validation, y_validation, n_classes):
+    """ This function is used to train the model.
+
+    :param X: Features
+    :param y: Labels
+    :param X_validation: Validation Features
+    :param y_validation: Validation Labels
+    :param n_classes: No of classes we are dealing with
+
+    :return: trained model
+    """
+    model = get_model(n_classes, X.shape[1])
 
     file_path = MODEL_FOLDER + "CNN_model.keras"
 
     # Callbacks
     checkpoint = ModelCheckpoint(
         file_path,
-        monitor='val_acc',
+        monitor='val_accuracy',
         verbose=1,
         save_best_only=True,
         mode='max'
     )
     early = EarlyStopping(
-        monitor="val_acc",
+        monitor="val_accuracy",
         mode="max",
         patience=5,
         verbose=1
     )
     redonplat = ReduceLROnPlateau(
-        monitor="val_acc",
+        monitor="val_accuracy",
         mode="max",
         patience=3,
         verbose=2
@@ -160,22 +180,45 @@ def train_model(X, y, X_validation, y_validation):
         X,
         y,
         epochs=N_EPOCHS,
-        verbose=5,
+        verbose=1,
         callbacks=callbacks_list,
-        validation_data=(X_validation, y_validation)
+        validation_data=(X_validation, y_validation),
+        batch_size=BATCH_SIZE,
+        shuffle=True
     )
-    model.load_weights(file_path)
 
-    return model
+    try:
+        # best_model = get_model(n_classes, X.shape[1])
+        model.load_weights(file_path)
+
+        return model
+    except Exception as err:
+        print(f"Error loading best model: {err}.\nReturning the model from the last epoch.")
+        return model
 
 
-if __name__ == '__main__':
-    reset_tf_session()
+def evaluate_model(model, X_test, y_test):
+    """ Returns an evaluation of the model.
 
-    train, validation, test = prepare_data()
+    :param model: Model in question
+    :param X_test: Test features
+    :param y_test: Test Labels
 
-    X_train, y_train, ann_train = separate_features_and_labels(train)
-    X_validation, y_validation, ann_validation = separate_features_and_labels(validation)
-    X_test, y_test, ann_test = separate_features_and_labels(test)
+    :return: None
+    """
+    pred_test = model.predict(X_test)
+    pred_test = np.argmax(pred_test, axis=-1)
 
-    model = train_model(X_train, y_train, X_validation, y_validation)
+    f1 = f1_score(y_test, pred_test, average="macro")
+
+    print("Test f1 score : %s " % f1)
+
+    acc = accuracy_score(y_test, pred_test)
+
+    print("Test accuracy score : %s " % acc)
+
+    cm = confusion_matrix(y_test, pred_test, labels=[0, 1])
+    disp = ConfusionMatrixDisplay(confusion_matrix=cm,
+                                  display_labels=["Sinus Rhythm", "Congestive Heart Failure"])
+    disp.plot()
+    plt.show()
