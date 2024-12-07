@@ -1,5 +1,7 @@
 # Data
-/data/
+/data/bidmc-congestive-heart-failure-database-1.0.0/
+/data/mit-bih-normal-sinus-rhythm-database-1.0.0/
+/data/processed_data/
 /gradcam_poc/mitbih_test.csv
 /gradcam_poc/mitbih_train.csv
 /gradcam_poc/ptbdb_abnormal.csv
@@ -15,4 +17,4 @@ __pycache__
 /venv/
 
 # Model
-/model/
+# /model/
